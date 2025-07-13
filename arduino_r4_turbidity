@@ -1,0 +1,108 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 32
+#define OLED_RESET    -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+const int sensorPin = A0;     // Turbidity sensor
+const int buzzerPin = 5;      // Buzzer
+
+const int dataPin = 9;    // SER
+const int latchPin = 10;  // RCLK
+const int clockPin = 11;  // SRCLK
+
+const int led9Pin = 6;
+const int led10Pin = 7;
+
+unsigned long lastLEDUpdate = 0;
+const unsigned long ledUpdateInterval = 2000;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(sensorPin, INPUT);
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(led9Pin, OUTPUT);
+  pinMode(led10Pin, OUTPUT);
+
+  digitalWrite(buzzerPin, LOW);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("OLED not detected!");
+    while (true);
+  }
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(10, 10);
+  display.println("Turbidity Monitor");
+  display.display();
+  delay(1500);
+}
+
+void loop() {
+  int sensorValue = analogRead(sensorPin);
+  int turbidity = map(sensorValue, 0, 1000, 100, 0);
+  turbidity = constrain(turbidity, 0, 100);
+
+  Serial.print("Sensor: ");
+  Serial.print(sensorValue);
+  Serial.print(" | Turbidity: ");
+  Serial.print(turbidity);
+  Serial.println("%");
+
+  // OLED display
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print("Turbidity: ");
+  display.print(turbidity);
+  display.print("%");
+
+  display.setCursor(0, 10);
+  display.print("Value: ");
+  display.print(sensorValue);
+
+  display.setCursor(0, 22);
+  if (sensorValue <= 300) {
+    display.print("Status: DIRTY");
+    digitalWrite(buzzerPin, HIGH);
+    delay(200);
+    digitalWrite(buzzerPin, LOW);
+  } else if (sensorValue <= 550) {
+    display.print("Status: CLOUDY");
+    digitalWrite(buzzerPin, LOW);
+  } else {
+    display.print("Status: CLEAR");
+    digitalWrite(buzzerPin, LOW);
+  }
+
+  display.display();
+
+  if (millis() - lastLEDUpdate >= ledUpdateInterval) {
+    updateLEDBar(turbidity);
+    lastLEDUpdate = millis();
+  }
+
+  delay(500);
+}
+
+void updateLEDBar(int turbidityPercent) {
+  int level = map(turbidityPercent, 0, 100, 0, 10);
+  level = constrain(level, 0, 10);
+
+  byte pattern = (level == 0) ? 0x00 : (1 << min(level, 8)) - 1;
+
+  digitalWrite(latchPin, LOW);
+  shiftOut(dataPin, clockPin, MSBFIRST, pattern);
+  digitalWrite(latchPin, HIGH);
+
+  digitalWrite(led9Pin, level >= 9 ? HIGH : LOW);
+  digitalWrite(led10Pin, level == 10 ? HIGH : LOW);
+}
