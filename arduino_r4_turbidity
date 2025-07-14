@@ -1,24 +1,29 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 32
 #define OLED_RESET    -1
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-const int sensorPin = A0;     // Turbidity sensor
-const int buzzerPin = 5;      // Buzzer
+// Sensor and buzzer
+const int sensorPin = A0;
+const int buzzerPin = 5;
 
-const int dataPin = 9;    // SER
-const int latchPin = 10;  // RCLK
-const int clockPin = 11;  // SRCLK
+// Shift Register for LED bar (LEDs 1–8)
+const int dataPin = 9;    // DS
+const int latchPin = 10;  // ST_CP
+const int clockPin = 11;  // SH_CP
 
+// Directly connected LEDs (LEDs 9 & 10)
 const int led9Pin = 6;
 const int led10Pin = 7;
 
-unsigned long lastLEDUpdate = 0;
-const unsigned long ledUpdateInterval = 2000;
+// Buzzer timer
+unsigned long buzzerOnTime = 0;
+bool buzzerActive = false;
 
 void setup() {
   Serial.begin(9600);
@@ -33,6 +38,7 @@ void setup() {
 
   digitalWrite(buzzerPin, LOW);
 
+  // Initialize OLED
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println("OLED not detected!");
     while (true);
@@ -58,7 +64,7 @@ void loop() {
   Serial.print(turbidity);
   Serial.println("%");
 
-  // OLED display
+  // OLED Display
   display.clearDisplay();
   display.setCursor(0, 0);
   display.print("Turbidity: ");
@@ -72,37 +78,58 @@ void loop() {
   display.setCursor(0, 22);
   if (sensorValue <= 300) {
     display.print("Status: DIRTY");
-    digitalWrite(buzzerPin, HIGH);
-    delay(200);
-    digitalWrite(buzzerPin, LOW);
+
+    // Turn on buzzer for 200ms (non-blocking)
+    if (!buzzerActive) {
+      digitalWrite(buzzerPin, HIGH);
+      buzzerOnTime = millis();
+      buzzerActive = true;
+    }
+
   } else if (sensorValue <= 550) {
     display.print("Status: CLOUDY");
     digitalWrite(buzzerPin, LOW);
+    buzzerActive = false;
+
   } else {
     display.print("Status: CLEAR");
     digitalWrite(buzzerPin, LOW);
+    buzzerActive = false;
   }
 
   display.display();
 
-  if (millis() - lastLEDUpdate >= ledUpdateInterval) {
-    updateLEDBar(turbidity);
-    lastLEDUpdate = millis();
+  // Turn off buzzer after 200ms if active
+  if (buzzerActive && millis() - buzzerOnTime >= 500) {
+    digitalWrite(buzzerPin, LOW);
+    buzzerActive = false;
   }
-
-  delay(500);
+  setLEDLevel(turbidity);
+  delay(50);
 }
 
-void updateLEDBar(int turbidityPercent) {
+void setLEDLevel(int turbidityPercent) {
+  static int lastLevel = -1;
+
   int level = map(turbidityPercent, 0, 100, 0, 10);
   level = constrain(level, 0, 10);
 
-  byte pattern = (level == 0) ? 0x00 : (1 << min(level, 8)) - 1;
+  if (level != lastLevel) {
+    byte pattern = 0x00;
+    if (level > 0) {
+      pattern = (1 << min(level, 8)) - 1;
+    }
 
+    updateLEDBar(pattern);
+    digitalWrite(led9Pin, level >= 9 ? HIGH : LOW);
+    digitalWrite(led10Pin, level == 10 ? HIGH : LOW);
+
+    lastLevel = level;
+  }
+}
+
+void updateLEDBar(byte pattern) {
   digitalWrite(latchPin, LOW);
   shiftOut(dataPin, clockPin, MSBFIRST, pattern);
   digitalWrite(latchPin, HIGH);
-
-  digitalWrite(led9Pin, level >= 9 ? HIGH : LOW);
-  digitalWrite(led10Pin, level == 10 ? HIGH : LOW);
 }
